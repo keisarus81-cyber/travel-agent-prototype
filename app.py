@@ -1,4 +1,5 @@
 import math
+from datetime import date, timedelta
 
 import folium
 import streamlit as st
@@ -16,6 +17,8 @@ from routing import (
     format_duration
 )
 
+from weather import get_weather_forecast
+
 
 # ==================================================
 # הגדרות
@@ -30,8 +33,8 @@ st.set_page_config(
 st.title("✈️ AI Travel Agent")
 
 st.caption(
-    "Prototype v0.8 — "
-    "Real Places + Real Walking Routes"
+    "Prototype v0.9 — "
+    "Real Places + Walking Routes + Weather"
 )
 
 
@@ -332,6 +335,57 @@ def load_walking_route(
 
 
 # ==================================================
+# Cache למזג אוויר
+# ==================================================
+
+@st.cache_data(
+    show_spinner=False,
+    ttl=1800
+)
+def load_weather_forecast(
+    latitude,
+    longitude,
+    forecast_days
+):
+
+    return get_weather_forecast(
+        latitude,
+        longitude,
+        days=forecast_days
+    )
+
+
+def get_weather_icon(weather_code):
+
+    if weather_code == 0:
+        return "☀️"
+
+    if weather_code in [1, 2]:
+        return "🌤️"
+
+    if weather_code == 3:
+        return "☁️"
+
+    if weather_code in [45, 48]:
+        return "🌫️"
+
+    if weather_code in [
+        51, 53, 55,
+        61, 63, 65,
+        80, 81, 82
+    ]:
+        return "🌧️"
+
+    if weather_code in [71, 73, 75]:
+        return "❄️"
+
+    if weather_code in [95, 96, 99]:
+        return "⛈️"
+
+    return "🌡️"
+
+
+# ==================================================
 # יצירת המפה
 # ==================================================
 
@@ -495,6 +549,14 @@ destination = st.text_input(
 )
 
 
+start_date = st.date_input(
+    "מתי הטיול מתחיל?",
+    value=date.today(),
+    min_value=date.today(),
+    format="DD/MM/YYYY"
+)
+
+
 days = st.number_input(
     "לכמה ימים?",
     min_value=1,
@@ -638,6 +700,12 @@ if st.button(
                             "destination":
                             destination,
 
+                            "start_date":
+                            start_date,
+
+                            "days":
+                            days,
+
                             "travelers":
                             travelers,
 
@@ -706,8 +774,54 @@ if "trip" in st.session_state:
         "המקומות והמיקומים אמיתיים. "
         "גם מסלולי ההליכה וזמני ההליכה "
         "מחושבים עכשיו לפי רשת הרחובות. "
+        "מזג האוויר מגיע מתחזית חיה. "
         "שעות פתיחה ומחירים עדיין לא מחוברים."
     )
+
+
+    # ==================================================
+    # תחזית מזג אוויר לטיול
+    # ==================================================
+
+    today = date.today()
+
+    days_until_trip = (
+        info["start_date"] - today
+    ).days
+
+    forecast_days_needed = min(
+        16,
+        max(
+            1,
+            days_until_trip + info["days"]
+        )
+    )
+
+    weather_forecast = []
+
+    try:
+
+        with st.spinner(
+            "טוען תחזית מזג אוויר..."
+        ):
+
+            weather_forecast = (
+                load_weather_forecast(
+                    location["lat"],
+                    location["lon"],
+                    forecast_days_needed
+                )
+            )
+
+    except Exception:
+
+        weather_forecast = []
+
+
+    weather_by_date = {
+        weather_day["date"]: weather_day
+        for weather_day in weather_forecast
+    }
 
 
     # ==================================================
@@ -720,14 +834,108 @@ if "trip" in st.session_state:
         ]
     ):
 
+        trip_date = (
+            info["start_date"]
+            + timedelta(
+                days=day["day"] - 1
+            )
+        )
+
+        date_text = (
+            trip_date.strftime(
+                "%d/%m/%Y"
+            )
+        )
+
         with st.expander(
-            f"📅 יום {day['day']}",
+            f"📅 יום {day['day']} — {date_text}",
             expanded=True
         ):
 
             activities = (
                 day["activities"]
             )
+
+
+            weather_day = weather_by_date.get(
+                trip_date.isoformat()
+            )
+
+
+            if weather_day:
+
+                weather_icon = get_weather_icon(
+                    weather_day[
+                        "weather_code"
+                    ]
+                )
+
+                st.write(
+                    f"### {weather_icon} "
+                    f"{weather_day['description']}"
+                )
+
+                weather_col1, weather_col2, weather_col3 = (
+                    st.columns(3)
+                )
+
+                with weather_col1:
+
+                    st.metric(
+                        "🌡️ טמפרטורה",
+                        (
+                            f"{weather_day['min_temp']:.0f}°"
+                            f"–"
+                            f"{weather_day['max_temp']:.0f}°"
+                        )
+                    )
+
+                with weather_col2:
+
+                    st.metric(
+                        "🌧️ סיכוי לגשם",
+                        (
+                            f"{weather_day['rain_probability']}%"
+                        )
+                    )
+
+                with weather_col3:
+
+                    st.metric(
+                        "💧 משקעים",
+                        (
+                            f"{weather_day['precipitation']:.1f} מ״מ"
+                        )
+                    )
+
+                if (
+                    weather_day[
+                        "rain_probability"
+                    ] >= 50
+                    and any(
+                        activity["type"]
+                        == "outdoor"
+                        for activity
+                        in activities
+                    )
+                ):
+
+                    st.warning(
+                        "יש סיכוי משמעותי לגשם "
+                        "וביום הזה מתוכננות גם "
+                        "פעילויות בחוץ. "
+                        "בשלב הבא נוכל להשתמש בזה "
+                        "כדי להציע שינוי במסלול."
+                    )
+
+            else:
+
+                st.info(
+                    "אין כרגע תחזית זמינה "
+                    "לתאריך הזה. תחזית מזג "
+                    "האוויר של הפרוטוטייפ "
+                    "זמינה רק לטווח הקרוב."
+                )
 
 
             if not activities:
