@@ -19,6 +19,11 @@ from routing import (
 
 from weather import get_weather_forecast
 
+from ai_planner import (
+    build_trip_context,
+    plan_trip_with_ai
+)
+
 
 # ==================================================
 # הגדרות
@@ -33,8 +38,8 @@ st.set_page_config(
 st.title("✈️ AI Travel Agent")
 
 st.caption(
-    "Prototype v0.9 — "
-    "Real Places + Walking Routes + Weather"
+    "Prototype v0.11 — "
+    "Real Places + Routes + Weather + OpenAI"
 )
 
 
@@ -629,7 +634,7 @@ if st.button(
         try:
 
             with st.spinner(
-                "מחפש מקומות ובונה מסלול..."
+                "מחפש מקומות, בודק מזג אוויר ומתכנן עם AI..."
             ):
 
                 location = (
@@ -674,6 +679,67 @@ if st.button(
 
                     else:
 
+                        # ==========================================
+                        # מזג אוויר עבור ה-AI
+                        # ==========================================
+
+                        today = date.today()
+
+                        days_until_trip = (
+                            start_date - today
+                        ).days
+
+                        forecast_days_needed = min(
+                            16,
+                            max(
+                                1,
+                                days_until_trip + days
+                            )
+                        )
+
+                        weather_forecast = []
+
+                        try:
+
+                            weather_forecast = (
+                                load_weather_forecast(
+                                    location["lat"],
+                                    location["lon"],
+                                    forecast_days_needed
+                                )
+                            )
+
+                        except Exception:
+
+                            weather_forecast = []
+
+
+                        # ==========================================
+                        # בניית הקשר ושליחה ל-OpenAI
+                        # ==========================================
+
+                        ai_context = build_trip_context(
+                            destination=destination,
+                            number_of_days=days,
+                            travelers=travelers,
+                            budget=budget,
+                            pace=pace,
+                            interests=interests,
+                            notes=notes,
+                            places=real_places,
+                            weather=weather_forecast
+                        )
+
+
+                        ai_result = plan_trip_with_ai(
+                            ai_context
+                        )
+
+
+                        # ==========================================
+                        # המנוע הקיים נשאר כגיבוי וכבסיס למפה
+                        # ==========================================
+
                         trip = create_trip(
                             real_places,
                             days,
@@ -689,6 +755,14 @@ if st.button(
                         st.session_state[
                             "real_places"
                         ] = real_places
+
+                        st.session_state[
+                            "weather_forecast"
+                        ] = weather_forecast
+
+                        st.session_state[
+                            "ai_result"
+                        ] = ai_result
 
                         st.session_state[
                             "trip"
@@ -780,6 +854,77 @@ if "trip" in st.session_state:
 
 
     # ==================================================
+    # תוכנית שנוצרה על ידי ה-AI
+    # ==================================================
+
+    ai_result = st.session_state.get(
+        "ai_result"
+    )
+
+
+    if ai_result:
+
+        st.subheader(
+            "🤖 תוכנית ה-AI"
+        )
+
+        if (
+            ai_result.get("status")
+            == "connected"
+            and ai_result.get("plan")
+        ):
+
+            st.success(
+                "ה-AI קיבל את נתוני הטיול "
+                "והכין תוכנית."
+            )
+
+            st.markdown(
+                ai_result["plan"]
+            )
+
+            st.caption(
+                "בגרסה הנוכחית תוכנית ה-AI "
+                "מוצגת כטיוטה. המפה והמסלול "
+                "שבהמשך עדיין נוצרים על ידי "
+                "מנוע התכנון הקיים. בשלב הבא "
+                "נחבר את בחירות ה-AI ישירות "
+                "למסלול ולמפה."
+            )
+
+        elif (
+            ai_result.get("status")
+            == "not_connected"
+        ):
+
+            st.warning(
+                "ה-AI לא מחובר כרגע. "
+                "ממשיך עם מנוע התכנון הקיים."
+            )
+
+            st.caption(
+                ai_result.get(
+                    "message",
+                    ""
+                )
+            )
+
+        else:
+
+            st.warning(
+                "קריאת ה-AI נכשלה, ולכן "
+                "ממשיכים עם מנוע התכנון הקיים."
+            )
+
+            st.caption(
+                ai_result.get(
+                    "message",
+                    ""
+                )
+            )
+
+
+    # ==================================================
     # תחזית מזג אוויר לטיול
     # ==================================================
 
@@ -797,25 +942,32 @@ if "trip" in st.session_state:
         )
     )
 
-    weather_forecast = []
+    weather_forecast = (
+        st.session_state.get(
+            "weather_forecast",
+            []
+        )
+    )
 
-    try:
+    if not weather_forecast:
 
-        with st.spinner(
-            "טוען תחזית מזג אוויר..."
-        ):
+        try:
 
-            weather_forecast = (
-                load_weather_forecast(
-                    location["lat"],
-                    location["lon"],
-                    forecast_days_needed
+            with st.spinner(
+                "טוען תחזית מזג אוויר..."
+            ):
+
+                weather_forecast = (
+                    load_weather_forecast(
+                        location["lat"],
+                        location["lon"],
+                        forecast_days_needed
+                    )
                 )
-            )
 
-    except Exception:
+        except Exception:
 
-        weather_forecast = []
+            weather_forecast = []
 
 
     weather_by_date = {
