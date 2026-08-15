@@ -24,6 +24,12 @@ from ai_planner import (
     plan_trip_with_ai
 )
 
+from trip_models import (
+    Activity,
+    TripIntent,
+    TripState
+)
+
 
 # ==================================================
 # הגדרות
@@ -311,6 +317,64 @@ def create_trip(
 
 
     return trip
+
+
+# ==================================================
+# מעבר מהמבנה הישן למבנה המשותף החדש של VOYA
+# ==================================================
+
+def build_structured_trip_intent(
+    travelers,
+    budget,
+    pace,
+    interests,
+    notes
+):
+
+    return TripIntent(
+        travelers=travelers,
+        budget=budget,
+        pace=pace,
+        interests=list(interests or []),
+        notes=notes or ""
+    )
+
+
+def build_structured_trip_state(
+    trip
+):
+
+    structured_activities = []
+
+    for day in trip:
+
+        for activity in day["activities"]:
+
+            structured_activities.append(
+                Activity(
+                    id=activity["id"],
+                    name=activity["name"],
+                    category=activity["category"],
+                    lat=activity["lat"],
+                    lon=activity["lon"],
+                    day=day["day"],
+                    start_time=activity["start_time"],
+                    place_type=activity["type"],
+                    source=activity.get(
+                        "source",
+                        "unknown"
+                    ),
+                    locked=activity.get(
+                        "locked",
+                        False
+                    )
+                )
+            )
+
+    return TripState(
+        current_day=1,
+        activities=structured_activities
+    )
 
 
 # ==================================================
@@ -748,6 +812,30 @@ if st.button(
                         )
 
 
+                        # ==========================================
+                        # יצירת Structured State חדש של VOYA
+                        #
+                        # בשלב הזה הוא נבנה במקביל למבנה הישן.
+                        # הוא עדיין לא מחליף את ה-UI, המפה או ה-AI.
+                        # ==========================================
+
+                        trip_intent = (
+                            build_structured_trip_intent(
+                                travelers=travelers,
+                                budget=budget,
+                                pace=pace,
+                                interests=interests,
+                                notes=notes
+                            )
+                        )
+
+                        trip_state = (
+                            build_structured_trip_state(
+                                trip
+                            )
+                        )
+
+
                         st.session_state[
                             "location"
                         ] = location
@@ -767,6 +855,14 @@ if st.button(
                         st.session_state[
                             "trip"
                         ] = trip
+
+                        st.session_state[
+                            "trip_intent"
+                        ] = trip_intent
+
+                        st.session_state[
+                            "trip_state"
+                        ] = trip_state
 
                         st.session_state[
                             "trip_info"
@@ -851,6 +947,40 @@ if "trip" in st.session_state:
         "מזג האוויר מגיע מתחזית חיה. "
         "שעות פתיחה ומחירים עדיין לא מחוברים."
     )
+
+
+    # ==================================================
+    # בדיקת Structured State - זמני לפיתוח
+    # ==================================================
+
+    if (
+        "trip_intent" in st.session_state
+        and "trip_state" in st.session_state
+    ):
+
+        with st.expander(
+            "🧪 VOYA Structured State — Developer"
+        ):
+
+            st.write(
+                "**Trip Intent**"
+            )
+
+            st.json(
+                st.session_state[
+                    "trip_intent"
+                ].to_dict()
+            )
+
+            st.write(
+                "**Trip State**"
+            )
+
+            st.json(
+                st.session_state[
+                    "trip_state"
+                ].to_dict()
+            )
 
 
     # ==================================================
